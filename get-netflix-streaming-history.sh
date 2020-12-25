@@ -6,7 +6,7 @@ then
 	exit 1
 fi
 
-API_VERSION="v93ed774a"
+API_VERSION=$(curl -s 'https://www.netflix.com/settings/viewed/' -H "$1" | grep -oP '(?<="X-Netflix.uiVersion":")[^"]*(?=")')
 PGSIZE=20 # they capped page size to 20 :-(
 
 pg=0
