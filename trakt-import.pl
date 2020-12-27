@@ -19,6 +19,8 @@ $|=1;
 $Data::Dumper::Indent = 1;
 binmode STDOUT, ':utf8';
 
+use constant MODE => 'Movie';
+
 my $client_id = 'f50d9e27e9567c96c9117b6f2811c51431de588096bf543bd64aa2727540dfd1';
 my $client_secret = 'b2861b4f8cecc3b1ad76e6b0f7752f6eec5ca14df6802ac921e2d72a815ff62e';
 my $access_token;
@@ -59,6 +61,356 @@ sub json_get($;@)
 	my $url = shift;
 	return json_req('GET', $url, @_);
 }
+
+sub get_summary_status_char($)
+{
+	my ($episode_or_movie) = @_;
+	my $status = ' ';
+	if(scalar($episode_or_movie->{trakt_watches}->@*) > 1)
+	{
+		$status = 'D';
+	}
+	elsif(($episode_or_movie->{trakt_watches}->[0]->{watched_at} // '') ne ($episode_or_movie->{netflix_watch_time_str} // ''))
+	{
+		if($episode_or_movie->{trakt_watches}->[0]->{watched_at} && $episode_or_movie->{netflix_watch_time_str} // '')
+		{
+			my $trakt_watch_time = str2time($episode_or_movie->{trakt_watches}->[0]->{watched_at});
+			my $netflix_watch_time = int($episode_or_movie->{netflix_watch_time} / 1000);
+			my $time_diff = abs($trakt_watch_time - $netflix_watch_time);
+			if($time_diff < 60*5)
+			{
+				$status = 'C';
+			}
+			elsif($time_diff < 60*60*25)
+			{
+				$status = 'c';
+			}
+
+		}
+	}
+	elsif($episode_or_movie->{netflix_watch_time_str})
+	{
+		$status = '✓';
+	}
+	return $status;
+}
+
+sub print_summary_row($)
+{
+	my ($episode_or_movie) = @_;
+	my $status = get_summary_status_char($episode_or_movie);
+	my $episode_label = MODE eq 'TV' ? sprintf('%dx%02d ', $episode_or_movie->{season}, $episode_or_movie->{number}) : '';
+	printf "%s %25s %25s %s%s",
+		$status,
+		$episode_or_movie->{trakt_watches}->[0]->{watched_at} // '',
+		$episode_or_movie->{netflix_watch_time_str} // '',
+		$episode_label,
+		$episode_or_movie->{title} // '[undef]';
+	print " (netflix: $episode_or_movie->{netflix_title})" if ($episode_or_movie->{netflix_title} && $episode_or_movie->{title} ne $episode_or_movie->{netflix_title});
+	print " (no netflix match)" if (not defined($episode_or_movie->{netflix_title}));
+	say "";
+}
+
+sub print_series_summary($$)
+{
+	my ($series_data, $trakt_series_id) = @_;
+	my $trakt_series_data = $series_data->{trakt}->{serieses}->{$trakt_series_id};
+
+	say sprintf "  %25s %25s %s", "trakt    ", "netflix    ", "title";
+	#print Dumper($trakt_series_data);
+	if(MODE eq 'TV')
+	{
+		foreach my $episode ($trakt_series_data->{episodes}->@*)
+		{
+			print_summary_row($episode);
+		}
+		foreach my $netflix_episode_title ($series_data->{netflix}->{episode_titles}->@*)
+		{
+			if (!grep { defined($_->{netflix_title}) && $netflix_episode_title eq $_->{netflix_title} } $trakt_series_data->{episodes}->@*)
+			{
+				printf "- %25s %25s      %s\n",
+					" - unmatched - ",
+					strftime("%FT%X.000Z", gmtime($series_data->{netflix}->{title_to_watch_time}->{$netflix_episode_title} / 1000)),
+					$netflix_episode_title;
+			}
+		#		say sprintf "N %25s %25s %s", "????", strftime("%FT%X.000Z", gmtime($netflix_title_to_watch_time{$episode} / 1000)), $episode // '';
+		}
+	}
+	else
+	{
+		print_summary_row($trakt_series_data);
+	}
+}
+
+sub match_tv_netflix_to_trakt($$)
+{
+	my ($series_data, $trakt_series_id) = @_;
+	my $trakt_series_data = $series_data->{trakt}->{serieses}->{$trakt_series_id};
+	printf "https://trakt.tv/shows/%-30s %s\n", $trakt_series_data->{show_data}->{ids}->{slug}, "Start of match_tv_netflix_to_trakt";
+	#say "trakt series id: $trakt_series_id";
+	#print_series_summary($series_data, $trakt_series_id);
+
+	if(grep { scalar($_->{trakt_watches}->@*) > 1 } $trakt_series_data->{episodes}->@*)
+	{
+		printf "https://trakt.tv/shows/%-30s %s\n", $trakt_series_data->{show_data}->{ids}->{slug}, "SKIPPING! Multiple Trakt watches!!";
+		return undef;
+	}
+
+	my %unmatched_trakt_episodes_by_title;
+	foreach my $i (0 .. $trakt_series_data->{episodes}->$#*)
+	{
+		print Dumper($trakt_series_data->{episodes}->[$i]);
+		my $trakt_episode_title = $series_data->{use_season_in_name} ?
+			sprintf "Season %d: \"%s\"", $trakt_series_data->{episodes}->[$i]->{season}, $trakt_series_data->{episodes}->[$i]->{title}
+			: $trakt_series_data->{episodes}->[$i]->{title};
+
+		if (defined($unmatched_trakt_episodes_by_title{$trakt_episode_title}))
+		{
+			printf "https://trakt.tv/shows/%-30s %s\n", $trakt_series_data->{show_data}->{ids}->{slug}, "SKIPPING! Duplicated Trakt title!! ($trakt_episode_title)";
+			say Dumper($trakt_series_data);
+			return undef;
+		}
+		if($trakt_episode_title)
+		{
+			$unmatched_trakt_episodes_by_title{$trakt_episode_title} = $i;
+		}
+	}
+	if(!%unmatched_trakt_episodes_by_title)
+	{
+		printf "https://trakt.tv/shows/%-30s %s\n", $trakt_series_data->{show_data}->{ids}->{slug}, "SKIPPING! No Trakt episodes!!";
+		#say Dumper($trakt_series_data);
+		return undef;
+	}
+
+	my @unmatched_netflix_titles = ( $series_data->{netflix}->{episode_titles}->@* );
+	my $series_match_score = 0;
+
+	# ================================
+	# match up netflix watches to trakt episodes
+	# first exact title matches
+	foreach my $i (0 .. $#unmatched_netflix_titles)
+	{
+		my $netflix_title = $unmatched_netflix_titles[$i];
+		my $trakt_ep_i = $unmatched_trakt_episodes_by_title{$netflix_title};
+		if(defined($trakt_ep_i))
+		{
+			my $watch_time = $series_data->{netflix}->{title_to_watch_time}->{$netflix_title};
+			$trakt_series_data->{episodes}->[$trakt_ep_i]->{netflix_watch_time} = $watch_time;
+			$trakt_series_data->{episodes}->[$trakt_ep_i]->{netflix_watch_time_str} = strftime("%FT%X.000Z", gmtime($watch_time / 1000));
+			$trakt_series_data->{episodes}->[$trakt_ep_i]->{netflix_title} = $netflix_title;
+			undef $unmatched_netflix_titles[$i];
+			delete $unmatched_trakt_episodes_by_title{$netflix_title};
+			$series_match_score += 100;
+		}
+	}
+	@unmatched_netflix_titles = grep { defined } @unmatched_netflix_titles;
+
+	# then closest title matches
+	foreach my $i (0 .. $#unmatched_netflix_titles)
+	{
+		my $netflix_title = $unmatched_netflix_titles[$i];
+		if (%unmatched_trakt_episodes_by_title)
+		{
+			my @sorted = sort {token_set_ratio($netflix_title, $b) <=> token_set_ratio($netflix_title, $a)} grep { $_ } keys %unmatched_trakt_episodes_by_title;
+			my $best_trakt_episode_title = $sorted[0];
+			#say "$netflix_title <=> $_ ".token_set_ratio($netflix_title,$_) foreach(@sorted);
+			#say "MATCH?? '$netflix_title' and '$best_trakt_episode_title'";
+			my $trakt_ep_i = $unmatched_trakt_episodes_by_title{$best_trakt_episode_title};
+			if(defined($trakt_ep_i))
+			{
+				my $watch_time = $series_data->{netflix}->{title_to_watch_time}->{$netflix_title};
+				$trakt_series_data->{episodes}->[$trakt_ep_i]->{netflix_watch_time} = $watch_time;
+				$trakt_series_data->{episodes}->[$trakt_ep_i]->{netflix_watch_time_str} = strftime("%FT%X.000Z", gmtime($watch_time / 1000));
+				$trakt_series_data->{episodes}->[$trakt_ep_i]->{netflix_title} = $netflix_title;
+				undef $unmatched_netflix_titles[$i];
+				delete $unmatched_trakt_episodes_by_title{$best_trakt_episode_title};
+				$series_match_score += token_set_ratio($netflix_title, $best_trakt_episode_title);
+			}
+		}
+	}
+	@unmatched_netflix_titles = grep { defined } @unmatched_netflix_titles;
+
+	#say "trakt_data:";
+	#print Dumper($trakt_series_data);
+	#print_series_summary($series_data, $trakt_series_id);
+	#say "Score: $series_match_score";
+
+	#if(@unmatched_netflix_titles)
+	#{
+	#	say "SKIPPING: Netflix episodes unmatched";
+	#	say Dumper(\@unmatched_netflix_titles);
+	#	return undef;
+	#}
+
+	$trakt_series_data->{series_match_score} = $series_match_score;
+	printf "https://trakt.tv/shows/%-30s %s\n", $trakt_series_data->{show_data}->{ids}->{slug}, "Score: $series_match_score";
+	return $series_match_score;
+}
+
+sub match_movie_netflix_to_trakt($$)
+{
+	my ($series_data, $trakt_series_id) = @_;
+	my $trakt_series_data = $series_data->{trakt}->{serieses}->{$trakt_series_id};
+	printf "https://trakt.tv/movies/%-30s %s\n", $trakt_series_data->{movie_data}->{ids}->{slug}, "Start of match_movie_netflix_to_trakt";
+	#say "trakt series id: $trakt_series_id";
+	#print_series_summary($series_data, $trakt_series_id);
+
+	if(scalar($trakt_series_data->{trakt_watches}->@*) > 1)
+	{
+		printf "https://trakt.tv/movies/%-30s %s\n", $trakt_series_data->{movie_data}->{ids}->{slug}, "SKIPPING! Multiple Trakt watches!!";
+		return undef;
+	}
+
+	my $series_match_score = 0;
+
+	$trakt_series_data->{title} = $trakt_series_data->{movie_data}->{title};
+
+	my $watch_time = $series_data->{netflix}->{watches}->[0]->{date};
+	$trakt_series_data->{netflix_watch_time} = $watch_time;
+	$trakt_series_data->{netflix_watch_time_str} = strftime("%FT%X.000Z", gmtime($watch_time / 1000));
+	$trakt_series_data->{netflix_title} = $series_data->{netflix}->{watches}->[0]->{title};
+
+	$series_match_score = token_set_ratio($series_data->{netflix}->{title}, $trakt_series_data->{movie_data}->{title});
+	$series_match_score += scalar(grep {$_} values $trakt_series_data->{movie_data}->{ids}->%*);
+	$series_match_score += 100 * int($trakt_series_data->{movie_data}->{rating});
+	$series_match_score += int($trakt_series_data->{movie_data}->{votes});
+	$trakt_series_data->{series_match_score} = $series_match_score;
+	printf "https://trakt.tv/movies/%-30s %s\n", $trakt_series_data->{movie_data}->{ids}->{slug}, "Score: $series_match_score";
+	return $series_match_score;
+}
+
+
+sub interact($$)
+{
+	my ($series_data, $trakt_series_id) = @_;
+	my $trakt_series_data = $series_data->{trakt}->{serieses}->{$trakt_series_id};
+	my $needs_sync;
+
+	say "";
+	say "Netflix: $series_data->{netflix}->{title}";
+	if(MODE eq 'TV')
+	{
+		say "Trakt: $trakt_series_data->{show_data}->{title}  ( https://trakt.tv/shows/$trakt_series_data->{show_data}->{ids}->{slug} )";
+		$needs_sync = grep {
+			scalar($_->{trakt_watches}->@*) <= 1 &&
+			$_->{netflix_watch_time_str} &&
+			($_->{trakt_watches}->[0]->{watched_at} // '') ne ($_->{netflix_watch_time_str} // '')
+		} $trakt_series_data->{episodes}->@*;
+	}
+	else
+	{
+		say "Trakt: $trakt_series_data->{movie_data}->{title}  ( https://trakt.tv/movies/$trakt_series_data->{movie_data}->{ids}->{slug} )";
+		$needs_sync = scalar($trakt_series_data->{trakt_watches}->@*) <= 1 &&
+			$trakt_series_data->{netflix_watch_time_str} &&
+			($trakt_series_data->{trakt_watches}->[0]->{watched_at} // '') ne ($trakt_series_data->{netflix_watch_time_str} // '');
+	}
+	say "";
+	print_series_summary($series_data, $trakt_series_id);
+
+
+	if(!$needs_sync)
+	{
+		say "Already in sync!";
+		return;
+	}
+	say "Sync now? (y/n/q/e)";
+	while(<>)
+	{
+		chomp;
+		last if($_ eq 'n');
+		exit if($_ eq 'q');
+		if($_ eq 'y')
+		{
+			print "Syncing";
+			if(MODE eq 'TV')
+			{
+				foreach my $episode ($trakt_series_data->{episodes}->@*)
+				{
+					if($episode->{netflix_watch_time_str} && ($episode->{trakt_watches}->[0]->{watched_at} // '') ne ($episode->{netflix_watch_time_str} // ''))
+					{
+						if($episode->{trakt_watches}->@*)
+						{
+							# existing watch don't match up
+							# remove it
+							json_post('/sync/history/remove', ids => [$episode->{trakt_watches}->[0]->{id}]);
+							sleep 1.5;
+						}
+						my $resp = json_post('/sync/history', episodes => [{
+								watched_at => $episode->{netflix_watch_time_str},
+								ids => {
+									trakt => $episode->{ids}->{trakt},
+								}
+						}]);
+						sleep 1.5;
+						#print Dumper($resp);
+
+						print '.';
+					}
+				}
+			}
+			else
+			{
+				if($trakt_series_data->{trakt_watches}->@*)
+				{
+					# existing watch don't match up
+					# remove it
+					json_post('/sync/history/remove', ids => [$trakt_series_data->{trakt_watches}->[0]->{id}]);
+					sleep 1.5;
+				}
+				my $resp = json_post('/sync/history', movies => [{
+						watched_at => $trakt_series_data->{netflix_watch_time_str},
+						ids => {
+							trakt => $trakt_series_data->{movie_data}->{ids}->{trakt},
+						}
+				}]);
+				sleep 1.5;
+
+				print '.';
+			}
+			print "\n";
+			last;
+		}
+		if($_ eq 'e')
+		{
+			say "Trakt title: ";
+			my $trakt_title = <>;
+			chomp $trakt_title;
+			say "Netflix title: ";
+			my $netflix_title = <>;
+			chomp $netflix_title;
+
+			my $trakt_episode_data = (grep { $_->{title} eq $trakt_title } $trakt_series_data->{episodes}->@*)[0];
+			if ($trakt_episode_data)
+			{
+				delete $trakt_episode_data->{netflix_title};
+				delete $trakt_episode_data->{netflix_watch_time};
+				delete $trakt_episode_data->{netflix_watch_time_str};
+
+				if (defined($series_data->{netflix}->{title_to_watch_time}->{$netflix_title}))
+				{
+					my $other_trakt_episode_data = (grep { defined($_->{netflix_title}) && $_->{netflix_title} eq $netflix_title } $trakt_series_data->{episodes}->@*)[0];
+					if ($other_trakt_episode_data)
+					{
+						delete $other_trakt_episode_data->{netflix_title};
+						delete $other_trakt_episode_data->{netflix_watch_time};
+						delete $other_trakt_episode_data->{netflix_watch_time_str};
+					}
+
+					my $watch_time = $series_data->{netflix}->{title_to_watch_time}->{$netflix_title};
+					$trakt_episode_data->{netflix_title} = $netflix_title;
+					$trakt_episode_data->{netflix_watch_time} = $watch_time;
+					$trakt_episode_data->{netflix_watch_time_str} = strftime("%FT%X.000Z", gmtime($watch_time / 1000));
+				}
+			}
+			print_series_summary($series_data, $trakt_series_id);
+
+		}
+		print "y/n/q/e? ";
+	}
+}
+
+
+# =====================================================
 
 if(-e '.trakt_access_token')
 {
@@ -106,334 +458,372 @@ else
 	write_file('.trakt_access_token', $access_token);
 }
 
-##$res = json_get('/search/show?fields=title,aliases&query='.uri_escape('Law & Order: Special Victims Unit'));
-##print $res->as_string;
-##my @search_data = @{from_json($res->decoded_content)};
-##my $id = $search_data[0]->{show}->{ids}->{trakt};
-##
-###$res = json_get('/sync/history/shows/'.$id.'?limit=1000');
-##$res = json_get('/sync/history/shows/?limit=10000');
-##print $res->as_string;
 
-my %series_netflix_to_trakt;
+
 
 my $dump_file = (glob "netflix-streaming-history*.json")[-1];
 my $netflix_data = from_json(read_file($dump_file));
 my $series_filter = @ARGV ? shift : '';
+
+
+my %series_data_by_netflixid;
+
 foreach my $netflix_watch (@$netflix_data)
 {
-	if(defined($netflix_watch->{series}))
+	my $netflixid;
+	my $netflix_series_title;
+
+	if(MODE eq 'TV')
 	{
-		my $netflix_series_id = $netflix_watch->{series};
-		my $netflix_series_title = $netflix_watch->{seriesTitle};
-		next if($series_filter && index($netflix_series_title, $series_filter) < 0);
-#next unless($netflix_series_title =~ /House Hunters/);
-		if(not defined($series_netflix_to_trakt{$netflix_series_id}))
+		next if(!defined($netflix_watch->{series}));
+		$netflixid = $netflix_watch->{series};
+		$netflix_series_title = $netflix_watch->{seriesTitle};
+		next if(!defined($netflix_series_title));
+	}
+	else
+	{
+		next if(defined($netflix_watch->{series}));
+		$netflixid = $netflix_watch->{movieID};
+		$netflix_series_title = $netflix_watch->{title};
+	}
+	next if($series_filter && index($netflix_series_title, $series_filter) < 0);
+	push @{$series_data_by_netflixid{$netflixid}->{netflix}->{watches}}, $netflix_watch;
+	$series_data_by_netflixid{$netflixid}->{netflix}->{title} = $netflix_series_title;
+	$series_data_by_netflixid{$netflixid}->{latest_watch} = max($series_data_by_netflixid{$netflixid}->{latest_watch} // 0, $netflix_watch->{date});
+}
+
+foreach my $netflix_series_id (sort { $series_data_by_netflixid{$b}->{latest_watch} <=> $series_data_by_netflixid{$a}->{latest_watch} } keys %series_data_by_netflixid)
+{
+	my @netflix_watches = grep { $_->{series} && $_->{series} == $netflix_series_id } @$netflix_data;
+	$series_data_by_netflixid{$netflix_series_id}->{use_season_in_name} = 0;
+
+	my %netflix_title_to_ids;
+	foreach my $netflix_watch (@netflix_watches)
+	{
+		$netflix_title_to_ids{$netflix_watch->{episodeTitle}}->{$netflix_watch->{movieID}} = 1;
+	}
+	if (grep { scalar keys %{$netflix_title_to_ids{$_}} > 1 && $_ =~ /^episode \d+$/i } keys %netflix_title_to_ids)
+	{
+		print Dumper(\%netflix_title_to_ids);
+		say "Using \"title\" field from Netflix instead of \"episodeTitle\"";
+		$series_data_by_netflixid{$netflix_series_id}->{use_season_in_name} = 1;
+		foreach my $netflix_watch (@netflix_watches)
 		{
-			say $netflix_series_title;
-			my @search_data = @{json_get('/search/show?fields=title,aliases&query='.uri_escape($netflix_series_title))};
-			if(!@search_data)
+			$netflix_watch->{episodeTitle} = $netflix_watch->{title};
+		}
+	}
+
+	my %netflix_title_to_watch_time;
+	foreach my $netflix_watch (@netflix_watches)
+	{
+		my $netflix_title = $netflix_watch->{episodeTitle};
+		if(defined($netflix_title_to_watch_time{$netflix_title}))
+		{
+			say "Duplicate Netflix watch: $netflix_title";
+		}
+		$netflix_title_to_watch_time{$netflix_title} = int($netflix_watch->{date}) if(!defined($netflix_title_to_watch_time{$netflix_title}) || int($netflix_watch->{date}) < $netflix_title_to_watch_time{$netflix_title});
+	}
+	$series_data_by_netflixid{$netflix_series_id}->{netflix}->{title_to_watch_time} = \%netflix_title_to_watch_time;
+	$series_data_by_netflixid{$netflix_series_id}->{netflix}->{episode_titles} = [ sort { $netflix_title_to_watch_time{$a} <=> $netflix_title_to_watch_time{$b} } keys %netflix_title_to_watch_time ];
+
+	# ======================
+
+	my $netflix_series_title = $series_data_by_netflixid{$netflix_series_id}->{netflix}->{title};
+	say "Looking in Trakt for \"$netflix_series_title\"";
+	my @search_data;
+	if(MODE eq 'TV')
+	{
+		@search_data = @{json_get('/search/show?fields=title,aliases&query='.uri_escape($netflix_series_title))};
+	}
+	else
+	{
+		@search_data = @{json_get('/search/movie?fields=title,aliases&query='.uri_escape($netflix_series_title))};
+	}
+	if(!@search_data)
+	{
+		say "Series NOT FOUND in Trakt! \"$netflix_series_title\"";
+		$series_data_by_netflixid{$netflix_series_id}->{trakt} = -1;
+	}
+	else
+	{
+		if(MODE eq 'TV')
+		{
+			foreach my $trakt_show (@search_data)
 			{
-				say "Series NOT FOUND in Trakt! \"$netflix_series_title\"";
-				$series_netflix_to_trakt{$netflix_series_id} = -1;
-			}
-			else
-			{
-				my $trakt_id = $search_data[0]->{show}->{ids}->{trakt};
+				my $trakt_id = $trakt_show->{show}->{ids}->{trakt};
 				my $show_data = json_get("/shows/$trakt_id");
+
 				my $episodes_data = json_get("/shows/$trakt_id/seasons?extended=episodes");
-				#print Dumper($episodes_data);
-				my $watch_history = json_get("/sync/history/shows/$trakt_id?limit=10000");
-				#print "watches:\n";
-				#print Dumper($watch_history);
-				$series_netflix_to_trakt{$netflix_series_id} = {
+				my $series_trakt_data = {
 					show_data => $show_data,
 					episodes => [ map { $_->{episodes}->@* } grep { defined $_->{episodes} } $episodes_data->@* ],
 				};
-				foreach my $episode ($series_netflix_to_trakt{$netflix_series_id}->{episodes}->@*)
+				foreach my $episode ($series_trakt_data->{episodes}->@*)
 				{
 					$episode->{trakt_watches} = [];
 				}
+
+				my $watch_history = json_get("/sync/history/shows/$trakt_id?limit=10000");
 				foreach my $watch ($watch_history->@*)
 				{
 					if($watch->{type} eq 'episode' and ($watch->{action} eq 'watch' || $watch->{action} eq 'scrobble'))
 					{
-						my ($episode) = grep { $_->{ids}->{trakt} == $watch->{episode}->{ids}->{trakt} } $series_netflix_to_trakt{$netflix_series_id}->{episodes}->@*;
+						my ($episode) = grep { $_->{ids}->{trakt} == $watch->{episode}->{ids}->{trakt} } $series_trakt_data->{episodes}->@*;
 						push @{$episode->{trakt_watches}}, {
 							watched_at => $watch->{watched_at},
 							id => $watch->{id},
 						};
 					}
 				}
-				#print Dumper($series_netflix_to_trakt{$netflix_series_id});
-last if(scalar keys %series_netflix_to_trakt > 40);
+				$series_data_by_netflixid{$netflix_series_id}->{trakt}->{serieses}->{$trakt_id} = $series_trakt_data;
+
+				# only fetch 4 search results from Trakt to limit API usage
+				if(scalar(keys $series_data_by_netflixid{$netflix_series_id}->{trakt}->{serieses}->%*) >= 4)
+				{
+					last;
+				}
 			}
-		}
-	}
-}
-
-say "======";
-
-say "Looking for accidental duplicate watches...";
-foreach my $trakt_series (values %series_netflix_to_trakt)
-{
-	next if(ref($trakt_series) ne 'HASH');
-	#say $trakt_series->{show_data}->{title};
-	foreach my $episode ($trakt_series->{episodes}->@*)
-	{
-		#say "  " . ($episode->{title} // "(no title)");
-		if (scalar($episode->{trakt_watches}->@*) > 1)
-		{
-			my @watches = sort { str2time($a->{watched_at}) <=> str2time($b->{watched_at}) } $episode->{trakt_watches}->@*;
-			my $time_diff = str2time($watches[-1]->{watched_at}) - str2time($watches[0]->{watched_at});
-			if ($time_diff < 60 * 60)
-			{
-				say $trakt_series->{show_data}->{title};
-				say "  " . ($episode->{title} // "(no title)");
-				say "CONSOLIDATE!";
-				my @removing_ids = map { $_->{id} } @watches[ 1 .. $#watches ];
-				print Dumper(\@watches);
-				print Dumper(\@removing_ids);
-
-				json_post('/sync/history/remove', ids => \@removing_ids);
-				$episode->{trakt_watches} = [ $watches[0] ];
-			}
-		}
-	}
-}
-
-say "======";
-
-foreach my $netflix_series_id (keys %series_netflix_to_trakt)
-{
-	my $trakt_data = $series_netflix_to_trakt{$netflix_series_id};
-	next if (ref($trakt_data) ne 'HASH');
-
-	my @netflix_watches = grep { $_->{series} && $_->{series} == $netflix_series_id } @$netflix_data;
-	my %netflix_title_to_watch_time;
-	my $netflix_multiple_episodes_same_name;
-	my $use_season_in_name = 0;
-	foreach my $netflix_watch (@netflix_watches)
-	{
-		my @watches_same_title = grep {$_->{episodeTitle} eq $netflix_watch->{episodeTitle}} @netflix_watches;
-		if(grep {$_->{movieID} ne $netflix_watch->{movieID}} @watches_same_title)
-		{
-			say "Netflix episode title used on multiple episides: $netflix_watch->{episodeTitle}";
-			$netflix_multiple_episodes_same_name = 1;
-			if($netflix_watch->{episodeTitle} =~ /^episode \d+$/i)
-			{
-				say "Using \"title\" field from Netflix instead of \"episodeTitle\"";
-				$use_season_in_name = 1;
-			}
-		}
-		elsif(defined($netflix_title_to_watch_time{$netflix_watch->{episodeTitle}}))
-		{
-			say "Duplicate Netflix watch: $netflix_watch->{episodeTitle}";
-		}
-		my $netflix_episode_title = $use_season_in_name ? $netflix_watch->{title} : $netflix_watch->{episodeTitle};
-		$netflix_title_to_watch_time{$netflix_episode_title} = int($netflix_watch->{date}) if(!defined($netflix_title_to_watch_time{$netflix_episode_title}) || int($netflix_watch->{date}) < $netflix_title_to_watch_time{$netflix_episode_title});
-	}
-	my %trakt_episodes_by_title;
-	foreach my $i (0 .. $trakt_data->{episodes}->$#*)
-	{
-		my $trakt_episode_title;
-		if ($use_season_in_name)
-		{
-			$trakt_episode_title = sprintf "Season %d: \"%s\"", $trakt_data->{episodes}->[$i]->{season}, $trakt_data->{episodes}->[$i]->{title};
-			say $trakt_episode_title;
 		}
 		else
 		{
-			$trakt_episode_title = $trakt_data->{episodes}->[$i]->{title};
-		}
-		if ($trakt_episode_title)
-		{
-			push @{$trakt_episodes_by_title{$trakt_episode_title}}, $i;
-		}
-	}
-
-	say "Trakt:   " . $trakt_data->{show_data}->{title};
-	say "Netflix: " . $netflix_watches[0]->{seriesTitle};
-	say "https://trakt.tv/shows/" . $trakt_data->{show_data}->{ids}->{slug};
-	print "\n";
-
-	if(grep {scalar($_->@*) > 1} values %trakt_episodes_by_title)
-	{
-		say "SKIPPING! Duplicated Trakt title!!";
-		say Dumper(\%trakt_episodes_by_title);
-		#say Dumper($trakt_data);
-		say "======";
-		next;
-	}
-	if(!%trakt_episodes_by_title)
-	{
-		say "SKIPPING! No Trakt episodes!!";
-		#say Dumper(\%trakt_episodes_by_title);
-		#say Dumper($trakt_data);
-		say "======";
-		next;
-	}
-
-
-	#print Dumper($trakt_data);
-	#say "Trakt Episodes:";
-	#say join "\n", map { ($_->{title}//'?') . ($_->{watched_at} ? " (".join(", ", $_->{watched_at}->@*).")" : '') } $trakt_data->{episodes}->@*;
-	#print "\n";
-
-	#print Dumper(\@netflix_watches);
-	#say "Netflix Watches:";
-	#say join "\n", reverse map { $_->{episodeTitle} } @netflix_watches;
-
-	#print Dumper(\%netflix_title_to_watch_time);
-	#print Dumper(\%trakt_episodes_by_title);
-
-	my @netflix_titles = sort {$netflix_title_to_watch_time{$a} <=> $netflix_title_to_watch_time{$b}} keys %netflix_title_to_watch_time;
-
-	# ================================
-	# match up metflix watches to trakt episodes
-	# first exact title matches
-	foreach my $i (0 .. $#netflix_titles)
-	{
-		my $netflix_title = $netflix_titles[$i];
-		if($trakt_episodes_by_title{$netflix_title} && scalar($trakt_episodes_by_title{$netflix_title}->@*) == 1)
-		{
-			my $ep_i = $trakt_episodes_by_title{$netflix_title}->[0];
-			$trakt_data->{episodes}->[$ep_i]->{netflix_watch_time} = $netflix_title_to_watch_time{$netflix_title};
-			$trakt_data->{episodes}->[$ep_i]->{netflix_watch_time_str} = strftime("%FT%X.000Z", gmtime($netflix_title_to_watch_time{$netflix_title} / 1000));
-			$trakt_data->{episodes}->[$ep_i]->{netflix_title} = $netflix_title;
-			undef $netflix_titles[$i];
-		}
-	}
-
-	# then closest title matches
-	@netflix_titles = grep { defined } @netflix_titles;
-	foreach my $i (0 .. $#netflix_titles)
-	{
-		my $netflix_title = $netflix_titles[$i];
-		my @available_trakt_titles = grep { scalar($trakt_episodes_by_title{$_}->@*) == 1 && not defined($trakt_data->{episodes}->[$trakt_episodes_by_title{$_}->[0]]->{netflix_watch_time}) } keys %trakt_episodes_by_title;
-		my $best_trakt_episode_title = (sort {token_set_ratio($netflix_title, $b) <=> token_set_ratio($netflix_title, $a)} @available_trakt_titles)[0];
-		#say "MATCH?? '$netflix_title' and '$best_trakt_episode_title'";
-		my $ep_i = $trakt_episodes_by_title{$best_trakt_episode_title}->[0];
-		$trakt_data->{episodes}->[$ep_i]->{netflix_watch_time} = $netflix_title_to_watch_time{$netflix_title};
-		$trakt_data->{episodes}->[$ep_i]->{netflix_watch_time_str} = strftime("%FT%X.000Z", gmtime($netflix_title_to_watch_time{$netflix_title} / 1000));
-		$trakt_data->{episodes}->[$ep_i]->{netflix_title} = $netflix_title;
-		undef $netflix_titles[$i];
-	}
-
-	@netflix_titles = grep { defined } @netflix_titles;
-
-	sub print_episodes($)
-	{
-		my ($trakt_data) = @_;
-		say sprintf "  %25s %25s %s", "trakt", "netflix", "title";
-		#print Dumper($trakt_data);
-		foreach my $episode ($trakt_data->{episodes}->@*)
-		{
-			my $status = ' ';
-			if(scalar($episode->{trakt_watches}->@*) > 1)
+			foreach my $trakt_movie (@search_data)
 			{
-				$status = 'D';
-			}
-			elsif(($episode->{trakt_watches}->[0]->{watched_at} // '') ne ($episode->{netflix_watch_time_str} // ''))
-			{
-				if($episode->{trakt_watches}->[0]->{watched_at} && $episode->{netflix_watch_time_str} // '')
+				my $trakt_id = $trakt_movie->{movie}->{ids}->{trakt};
+				my $movie_data = json_get("/movies/$trakt_id?extended=full");
+				my $series_trakt_data = {
+					movie_data => $movie_data,
+					trakt_watches => [],
+				};
+				my $watch_history = json_get("/sync/history/movies/$trakt_id?limit=10000");
+				foreach my $watch ($watch_history->@*)
 				{
-					my $trakt_watch_time = str2time($episode->{trakt_watches}->[0]->{watched_at});
-					my $netflix_watch_time = int($episode->{netflix_watch_time} / 1000);
-					my $time_diff = abs($trakt_watch_time - $netflix_watch_time);
-					if($time_diff < 60*5)
+					if($watch->{type} eq 'movie' and ($watch->{action} eq 'watch' || $watch->{action} eq 'scrobble'))
 					{
-						$status = 'C';
+						push @{$series_trakt_data->{trakt_watches}}, {
+							watched_at => $watch->{watched_at},
+							id => $watch->{id},
+						};
 					}
-					elsif($time_diff < 60*60*25)
-					{
-						$status = 'c';
-					}
+				}
+				$series_data_by_netflixid{$netflix_series_id}->{trakt}->{serieses}->{$trakt_id} = $series_trakt_data;
 
+				# only fetch 4 search results from Trakt to limit API usage
+				if(scalar(keys $series_data_by_netflixid{$netflix_series_id}->{trakt}->{serieses}->%*) >= 4)
+				{
+					last;
 				}
 			}
-			elsif($episode->{netflix_watch_time_str})
-			{
-				$status = '✓';
-			}
-			say sprintf "%s %25s %25s %dx%02d %s%s",
-				$status,
-				$episode->{trakt_watches}->[0]->{watched_at} // '',
-				$episode->{netflix_watch_time_str} // '',
-				$episode->{season},
-				$episode->{number},
-				$episode->{title} // '[undef]',
-				$episode->{netflix_title} && $episode->{title} ne $episode->{netflix_title} ? " (netflix: $episode->{netflix_title})" : '';
 		}
-		foreach my $episode (@netflix_titles)
+	}
+
+#say "======";
+#
+#say "Looking for accidental duplicate trakt watches...";
+#foreach my $trakt_series (values %series_netflix_to_trakt)
+#{
+#	next if(ref($trakt_series) ne 'HASH');
+#	#say $trakt_series->{show_data}->{title};
+#	foreach my $episode ($trakt_series->{episodes}->@*)
+#	{
+#		#say "  " . ($episode->{title} // "(no title)");
+#		if (scalar($episode->{trakt_watches}->@*) > 1)
+#		{
+#			my @watches = sort { str2time($a->{watched_at}) <=> str2time($b->{watched_at}) } $episode->{trakt_watches}->@*;
+#			my $time_diff = str2time($watches[-1]->{watched_at}) - str2time($watches[0]->{watched_at});
+#			if ($time_diff < 60 * 60)
+#			{
+#				say $trakt_series->{show_data}->{title};
+#				say "  " . ($episode->{title} // "(no title)");
+#				say "CONSOLIDATE!";
+#				my @removing_ids = map { $_->{id} } @watches[ 1 .. $#watches ];
+#				print Dumper(\@watches);
+#				print Dumper(\@removing_ids);
+#
+#				json_post('/sync/history/remove', ids => \@removing_ids);
+#				$episode->{trakt_watches} = [ $watches[0] ];
+#			}
+#		}
+#	}
+#}
+
+	# ==============================
+
+	my $series_data = $series_data_by_netflixid{$netflix_series_id};
+	my $trakt_data = $series_data->{trakt};
+	if(!ref($trakt_data))
+	{
+		say "Trakt data not found! Skipping.";
+		next;
+	}
+	foreach my $trakt_series_id (keys %{$trakt_data->{serieses}})
+	{
+		if(MODE eq 'TV')
 		{
-			say sprintf "N %25s %25s %s", "????", strftime("%FT%X.000Z", gmtime($netflix_title_to_watch_time{$episode} / 1000)), $episode // '';
+			match_tv_netflix_to_trakt($series_data, $trakt_series_id);
 		}
-		#print Dumper(\%trakt_episodes_by_title);
-	}
-
-	print_episodes($trakt_data);
-	my $needs_sync = grep {
-		scalar($_->{trakt_watches}->@*) <= 1 &&
-		$_->{netflix_watch_time_str} &&
-		($_->{trakt_watches}->[0]->{watched_at} // '') ne ($_->{netflix_watch_time_str} // '')
-	} $trakt_data->{episodes}->@*;
-
-	if(@netflix_titles)
-	{
-		say "skipping: netflix episodes unmatched";
-		say Dumper(\@netflix_titles);
-		say "======";
-		next;
-	}
-	if(grep { scalar($_->{trakt_watches}->@*) > 1 } $trakt_data->{episodes}->@*)
-	{
-		say "skipping: episodes with multiple Trakt watches";
-		say Dumper(grep { scalar($_->{trakt_watches}->@*) > 1 } $trakt_data->{episodes}->@*);
-		say "======";
-		next;
-	}
-	if(!$needs_sync)
-	{
-		say "Already in sync!";
-		next;
-	}
-	say "Sync now?";
-	while(<>)
-	{
-		chomp;
-		last if($_ eq 'n');
-		exit if($_ eq 'q');
-		if($_ eq 'y')
+		else
 		{
-			print "Syncing";
-			foreach my $episode ($trakt_data->{episodes}->@*)
-			{
-				if($episode->{netflix_watch_time_str} && ($episode->{trakt_watches}->[0]->{watched_at} // '') ne ($episode->{netflix_watch_time_str} // ''))
-				{
-					if($episode->{trakt_watches}->@*)
-					{
-						# existing watch don't match up
-						# remove it
-						json_post('/sync/history/remove', ids => [$episode->{trakt_watches}->[0]->{id}]);
-					}
-					json_post('/sync/history', episodes => [{
-							watched_at => $episode->{netflix_watch_time_str},
-							ids => {
-								trakt => $episode->{ids}->{trakt},
-							}
-					}]);
-
-					print '.';
-				}
-			}
-			print "\n";
-			last;
+			match_movie_netflix_to_trakt($series_data, $trakt_series_id);
 		}
-		print "y/n? ";
 	}
+	my $best_trakt_series_id = (sort { $trakt_data->{serieses}->{$b}->{series_match_score} <=> $trakt_data->{serieses}->{$a}->{series_match_score} } grep { defined($trakt_data->{serieses}->{$_}->{series_match_score}) } keys %{$trakt_data->{serieses}})[0];
+
+	interact($series_data, $best_trakt_series_id);
 }
 continue
 {
 	say "======";
 }
+
+exit;
+
+####foreach my $netflix_series_id (keys %series_data_by_netflixid)
+####{
+####	my $trakt_data = $series_data_by_netflixid{$netflix_series_id}->{trakt};
+####	my %trakt_episodes_by_title;
+####	foreach my $i (0 .. $trakt_data->{episodes}->$#*)
+####	{
+####		my $trakt_episode_title;
+####		if ($series_data_by_netflixid{$netflix_series_id}->{use_season_in_name})
+####		{
+####			$trakt_episode_title = sprintf "Season %d: \"%s\"", $trakt_data->{episodes}->[$i]->{season}, $trakt_data->{episodes}->[$i]->{title};
+####			say $trakt_episode_title;
+####		}
+####		else
+####		{
+####			$trakt_episode_title = $trakt_data->{episodes}->[$i]->{title};
+####		}
+####		if ($trakt_episode_title)
+####		{
+####			push @{$trakt_episodes_by_title{$trakt_episode_title}}, $i;
+####		}
+####	}
+####
+####
+####	if(grep {scalar($_->@*) > 1} values %trakt_episodes_by_title)
+####	{
+####		say "SKIPPING! Duplicated Trakt title!!";
+####		say Dumper(\%trakt_episodes_by_title);
+####		#say Dumper($trakt_data);
+####		say "======";
+####		next;
+####	}
+####	if(!%trakt_episodes_by_title)
+####	{
+####		say "SKIPPING! No Trakt episodes!!";
+####		#say Dumper(\%trakt_episodes_by_title);
+####		#say Dumper($trakt_data);
+####		say "======";
+####		next;
+####	}
+####
+####
+####	my %netflix_title_to_watch_time;
+####	my @netflix_titles = sort {$netflix_title_to_watch_time{$a} <=> $netflix_title_to_watch_time{$b}} keys %netflix_title_to_watch_time;
+####
+####
+####
+####	# ================================
+####	# match up netflix watches to trakt episodes
+####	# first exact title matches
+####	print Dumper(\%trakt_episodes_by_title);
+####	say join "\n", map { $_ . " - " . join(" ", $trakt_episodes_by_title{$_}->@*) } sort keys %trakt_episodes_by_title;
+####	foreach my $i (0 .. $#netflix_titles)
+####	{
+####		my $netflix_title = $netflix_titles[$i];
+####		if($trakt_episodes_by_title{$netflix_title} && scalar($trakt_episodes_by_title{$netflix_title}->@*) == 1)
+####		{
+####			my $ep_i = $trakt_episodes_by_title{$netflix_title}->[0];
+####			$trakt_data->{episodes}->[$ep_i]->{netflix_watch_time} = $netflix_title_to_watch_time{$netflix_title};
+####			$trakt_data->{episodes}->[$ep_i]->{netflix_watch_time_str} = strftime("%FT%X.000Z", gmtime($netflix_title_to_watch_time{$netflix_title} / 1000));
+####			$trakt_data->{episodes}->[$ep_i]->{netflix_title} = $netflix_title;
+####			undef $netflix_titles[$i];
+####		}
+####	}
+####
+####	# then closest title matches
+####	@netflix_titles = grep { defined } @netflix_titles;
+####	foreach my $i (0 .. $#netflix_titles)
+####	{
+####		my $netflix_title = $netflix_titles[$i];
+####		my @available_trakt_titles = grep { scalar($trakt_episodes_by_title{$_}->@*) == 1 && not defined($trakt_data->{episodes}->[$trakt_episodes_by_title{$_}->[0]]->{netflix_watch_time}) } keys %trakt_episodes_by_title;
+####		my $best_trakt_episode_title = (sort {token_set_ratio($netflix_title, $b) <=> token_set_ratio($netflix_title, $a)} @available_trakt_titles)[0];
+####		my @sorted = sort {token_set_ratio($netflix_title, $b) <=> token_set_ratio($netflix_title, $a)} @available_trakt_titles;
+####		say "$netflix_title <=> $_ ".token_set_ratio($netflix_title,$_) foreach(@sorted);
+####		say "MATCH?? '$netflix_title' and '$best_trakt_episode_title'";
+####		my $ep_i = $trakt_episodes_by_title{$best_trakt_episode_title}->[0];
+####		$trakt_data->{episodes}->[$ep_i]->{netflix_watch_time} = $netflix_title_to_watch_time{$netflix_title};
+####		$trakt_data->{episodes}->[$ep_i]->{netflix_watch_time_str} = strftime("%FT%X.000Z", gmtime($netflix_title_to_watch_time{$netflix_title} / 1000));
+####		$trakt_data->{episodes}->[$ep_i]->{netflix_title} = $netflix_title;
+####		undef $netflix_titles[$i];
+####	}
+####
+####	@netflix_titles = grep { defined } @netflix_titles;
+####
+####	#print_series_summary($trakt_data);
+####	my $needs_sync = grep {
+####		scalar($_->{trakt_watches}->@*) <= 1 &&
+####		$_->{netflix_watch_time_str} &&
+####		($_->{trakt_watches}->[0]->{watched_at} // '') ne ($_->{netflix_watch_time_str} // '')
+####	} $trakt_data->{episodes}->@*;
+####
+####	if(@netflix_titles)
+####	{
+####		say "skipping: netflix episodes unmatched";
+####		say Dumper(\@netflix_titles);
+####		say "======";
+####		next;
+####	}
+####	if(grep { scalar($_->{trakt_watches}->@*) > 1 } $trakt_data->{episodes}->@*)
+####	{
+####		say "skipping: episodes with multiple Trakt watches";
+####		say Dumper(grep { scalar($_->{trakt_watches}->@*) > 1 } $trakt_data->{episodes}->@*);
+####		say "======";
+####		next;
+####	}
+####	if(!$needs_sync)
+####	{
+####		say "Already in sync!";
+####		next;
+####	}
+####	say "Sync now? (y/n/q)";
+####	while(<>)
+####	{
+####		chomp;
+####		last if($_ eq 'n');
+####		exit if($_ eq 'q');
+####		if($_ eq 'y')
+####		{
+####			print "Syncing";
+####			foreach my $episode ($trakt_data->{episodes}->@*)
+####			{
+####				if($episode->{netflix_watch_time_str} && ($episode->{trakt_watches}->[0]->{watched_at} // '') ne ($episode->{netflix_watch_time_str} // ''))
+####				{
+####					if($episode->{trakt_watches}->@*)
+####					{
+####						# existing watch don't match up
+####						# remove it
+####						json_post('/sync/history/remove', ids => [$episode->{trakt_watches}->[0]->{id}]);
+####					}
+####					my $resp = json_post('/sync/history', episodes => [{
+####							watched_at => $episode->{netflix_watch_time_str},
+####							ids => {
+####								trakt => $episode->{ids}->{trakt},
+####							}
+####					}]);
+####					sleep 1.5;
+####					#print Dumper($resp);
+####
+####					print '.';
+####				}
+####			}
+####			print "\n";
+####			last;
+####		}
+####		print "y/n? ";
+####	}
+####}
+####continue
+####{
+####	say "======";
+####}
