@@ -27,6 +27,7 @@ sub preprocess($s)
 	$s =~ s/\b2\b/two/g;
 	$s =~ s/\b3\b/three/g;
 	$s =~ s/\b4\b/four/g;
+	$s =~ s/\W/ /g;
 	$s = lc $s;
 	return $s;
 }
@@ -48,9 +49,12 @@ sub token_set_ratio($s1, $s2)
 	my $combined_1to2 = $sorted_sect . ' ' . $sorted_1to2;
 	my $combined_2to1 = $sorted_sect . ' ' . $sorted_2to1;
 
-	chomp $sorted_sect;
-	chomp $combined_1to2;
-	chomp $combined_2to1;
+	$sorted_sect =~ s/^\s+|\s+$//g;
+	$combined_1to2 =~ s/^\s+|\s+$//g;
+	$combined_2to1 =~ s/^\s+|\s+$//g;
+	#print Dumper($sorted_sect);
+	#print Dumper($combined_1to2);
+	#print Dumper($combined_2to1);
 
 	my @pairwise = (
 		ratio($sorted_sect, $combined_1to2),
