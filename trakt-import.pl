@@ -149,7 +149,7 @@ sub match_tv_netflix_to_trakt($$)
 {
 	my ($series_data, $trakt_series_id) = @_;
 	my $trakt_series_data = $series_data->{trakt}->{serieses}->{$trakt_series_id};
-	printf "https://trakt.tv/shows/%-30s %s\n", $trakt_series_data->{show_data}->{ids}->{slug}, "Start of match_tv_netflix_to_trakt";
+	printf "https://trakt.tv/shows/%-30s %s\n", $trakt_series_data->{show_data}->{ids}->{slug}, "Start of match_tv_netflix_to_trakt ID: $trakt_series_id";
 	#say "trakt series id: $trakt_series_id";
 	#print_series_summary($series_data, $trakt_series_id);
 
@@ -256,7 +256,7 @@ sub match_movie_netflix_to_trakt($$)
 {
 	my ($series_data, $trakt_series_id) = @_;
 	my $trakt_series_data = $series_data->{trakt}->{serieses}->{$trakt_series_id};
-	printf "https://trakt.tv/movies/%-30s %s\n", $trakt_series_data->{movie_data}->{ids}->{slug}, "Start of match_movie_netflix_to_trakt";
+	printf "https://trakt.tv/movies/%-30s %s\n", $trakt_series_data->{movie_data}->{ids}->{slug}, "Start of match_movie_netflix_to_trakt ID: $trakt_series_id";
 	#say "trakt series id: $trakt_series_id";
 	#print_series_summary($series_data, $trakt_series_id);
 
@@ -318,7 +318,7 @@ sub interact($$)
 		say "Already in sync!";
 		return;
 	}
-	say "Sync now? (y/n/q/e)";
+	say "Sync now? (y/n/q/e/c)";
 	while(<>)
 	{
 		chomp;
@@ -410,7 +410,14 @@ sub interact($$)
 			print_series_summary($series_data, $trakt_series_id);
 
 		}
-		print "y/n/q/e? ";
+		if($_ eq 'c')
+		{
+			say "Change. ID: ";
+			my $new_id = <>;
+			chomp $new_id;
+			return $new_id if($new_id);
+		}
+		print "y/n/q/e/c? ";
 	}
 }
 
@@ -692,9 +699,15 @@ foreach my $netflix_series_id (sort { $series_data_by_netflixid{$b}->{latest_wat
 			match_movie_netflix_to_trakt($series_data, $trakt_series_id);
 		}
 	}
-	my $best_trakt_series_id = (sort { $trakt_data->{serieses}->{$b}->{series_match_score} <=> $trakt_data->{serieses}->{$a}->{series_match_score} } grep { defined($trakt_data->{serieses}->{$_}->{series_match_score}) } keys %{$trakt_data->{serieses}})[0];
 
-	interact($series_data, $best_trakt_series_id);
+	my $best_trakt_series_id = (sort { $trakt_data->{serieses}->{$b}->{series_match_score} <=> $trakt_data->{serieses}->{$a}->{series_match_score} } grep { defined($trakt_data->{serieses}->{$_}->{series_match_score}) } keys %{$trakt_data->{serieses}})[0];
+	while(1)
+	{
+		say "ID: $best_trakt_series_id";
+		my $new_id = interact($series_data, $best_trakt_series_id);
+		last if(!defined($new_id));
+		$best_trakt_series_id = $new_id;
+	}
 }
 continue
 {
