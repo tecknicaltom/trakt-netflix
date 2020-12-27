@@ -465,8 +465,14 @@ else
 
 my $dump_file = (glob "netflix-streaming-history*.json")[-1];
 my $netflix_data = from_json(read_file($dump_file));
-my $series_filter = @ARGV ? shift : '';
-
+my $series_filter;
+my $skip_until;
+if(scalar(@ARGV) >= 2 && $ARGV[0] eq '--skip-until')
+{
+	shift;
+	$skip_until = shift;
+}
+$series_filter = @ARGV ? shift : '';
 
 my %series_data_by_netflixid;
 
@@ -486,6 +492,17 @@ foreach my $netflix_watch (@$netflix_data)
 	{
 		$netflixid = $netflix_watch->{movieID};
 		$netflix_series_title = $netflix_watch->{title};
+	}
+	if($skip_until)
+	{
+		if(index($netflix_series_title, $skip_until) >= 0)
+		{
+			undef $skip_until;
+		}
+		else
+		{
+			next;
+		}
 	}
 	next if($series_filter && index($netflix_series_title, $series_filter) < 0);
 	push @{$series_data_by_netflixid{$netflixid}->{netflix}->{watches}}, $netflix_watch;
