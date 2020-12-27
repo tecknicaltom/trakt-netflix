@@ -14,7 +14,7 @@ use Fuzzy 'token_set_ratio';
 use IPC::Run 'run';
 use Date::Parse;
 use POSIX 'strftime';
-use List::Util qw(min max);
+use List::Util qw(min max sum);
 $|=1;
 $Data::Dumper::Indent = 1;
 binmode STDOUT, ':utf8';
@@ -161,7 +161,7 @@ sub match_tv_netflix_to_trakt($$)
 	my %unmatched_trakt_episodes_by_title;
 	foreach my $i (0 .. $trakt_series_data->{episodes}->$#*)
 	{
-		print Dumper($trakt_series_data->{episodes}->[$i]);
+		#print Dumper($trakt_series_data->{episodes}->[$i]);
 		my $trakt_episode_title = $series_data->{use_season_in_name} ?
 			sprintf "Season %d: \"%s\"", $trakt_series_data->{episodes}->[$i]->{season}, $trakt_series_data->{episodes}->[$i]->{title}
 			: $trakt_series_data->{episodes}->[$i]->{title};
@@ -169,7 +169,7 @@ sub match_tv_netflix_to_trakt($$)
 		if (defined($unmatched_trakt_episodes_by_title{$trakt_episode_title}))
 		{
 			printf "https://trakt.tv/shows/%-30s %s\n", $trakt_series_data->{show_data}->{ids}->{slug}, "SKIPPING! Duplicated Trakt title!! ($trakt_episode_title)";
-			say Dumper($trakt_series_data);
+			#say Dumper($trakt_series_data);
 			return undef;
 		}
 		if($trakt_episode_title)
@@ -243,6 +243,8 @@ sub match_tv_netflix_to_trakt($$)
 	#	say Dumper(\@unmatched_netflix_titles);
 	#	return undef;
 	#}
+
+	$series_match_score += sum(map { scalar($_->{trakt_watches}->@*) } $trakt_series_data->{episodes}->@*);
 
 	$trakt_series_data->{series_match_score} = $series_match_score;
 	printf "https://trakt.tv/shows/%-30s %s\n", $trakt_series_data->{show_data}->{ids}->{slug}, "Score: $series_match_score";
