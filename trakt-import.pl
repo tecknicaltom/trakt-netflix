@@ -19,8 +19,6 @@ $|=1;
 $Data::Dumper::Indent = 1;
 binmode STDOUT, ':utf8';
 
-use constant MODE => 'Movie';
-
 my $client_id = 'f50d9e27e9567c96c9117b6f2811c51431de588096bf543bd64aa2727540dfd1';
 my $client_secret = 'b2861b4f8cecc3b1ad76e6b0f7752f6eec5ca14df6802ac921e2d72a815ff62e';
 my $access_token;
@@ -99,7 +97,11 @@ sub print_summary_row($)
 {
 	my ($episode_or_movie) = @_;
 	my $status = get_summary_status_char($episode_or_movie);
-	my $episode_label = MODE eq 'TV' ? sprintf('%dx%02d ', $episode_or_movie->{season}, $episode_or_movie->{number}) : '';
+	my $episode_label = '';
+	if(defined($episode_or_movie->{season}) && defined($episode_or_movie->{number}))
+	{
+		$episode_label = sprintf('%dx%02d ', $episode_or_movie->{season}, $episode_or_movie->{number});
+	}
 	printf "%s %25s %25s %s%s",
 		$status,
 		$episode_or_movie->{trakt_watches}->[0]->{watched_at} // '',
@@ -118,7 +120,7 @@ sub print_series_summary($$)
 
 	say sprintf "  %25s %25s %s", "trakt    ", "netflix    ", "title";
 	#print Dumper($trakt_series_data);
-	if(MODE eq 'TV')
+	if($series_data->{is_tv})
 	{
 		foreach my $episode ($trakt_series_data->{episodes}->@*)
 		{
@@ -288,7 +290,7 @@ sub interact($$)
 
 	say "";
 	say "Netflix: $series_data->{netflix}->{title}";
-	if(MODE eq 'TV')
+	if($series_data->{is_tv})
 	{
 		say "Trakt: $trakt_series_data->{show_data}->{title}  ( https://trakt.tv/shows/$trakt_series_data->{show_data}->{ids}->{slug} )";
 		$needs_sync = grep {
@@ -322,7 +324,7 @@ sub interact($$)
 		if($_ eq 'y')
 		{
 			print "Syncing";
-			if(MODE eq 'TV')
+			if($series_data->{is_tv})
 			{
 				foreach my $episode ($trakt_series_data->{episodes}->@*)
 				{
@@ -473,21 +475,21 @@ foreach my $netflix_watch (@$netflix_data)
 	my $netflixid;
 	my $netflix_series_title;
 
-	if(MODE eq 'TV')
+	my $is_tv = defined($netflix_watch->{series});
+	if($is_tv)
 	{
-		next if(!defined($netflix_watch->{series}));
 		$netflixid = $netflix_watch->{series};
 		$netflix_series_title = $netflix_watch->{seriesTitle};
 		next if(!defined($netflix_series_title));
 	}
 	else
 	{
-		next if(defined($netflix_watch->{series}));
 		$netflixid = $netflix_watch->{movieID};
 		$netflix_series_title = $netflix_watch->{title};
 	}
 	next if($series_filter && index($netflix_series_title, $series_filter) < 0);
 	push @{$series_data_by_netflixid{$netflixid}->{netflix}->{watches}}, $netflix_watch;
+	$series_data_by_netflixid{$netflixid}->{is_tv} = $is_tv;
 	$series_data_by_netflixid{$netflixid}->{netflix}->{title} = $netflix_series_title;
 	$series_data_by_netflixid{$netflixid}->{latest_watch} = max($series_data_by_netflixid{$netflixid}->{latest_watch} // 0, $netflix_watch->{date});
 }
@@ -531,7 +533,7 @@ foreach my $netflix_series_id (sort { $series_data_by_netflixid{$b}->{latest_wat
 	my $netflix_series_title = $series_data_by_netflixid{$netflix_series_id}->{netflix}->{title};
 	say "Looking in Trakt for \"$netflix_series_title\"";
 	my @search_data;
-	if(MODE eq 'TV')
+	if($series_data_by_netflixid{$netflix_series_id}->{is_tv})
 	{
 		@search_data = @{json_get('/search/show?fields=title,aliases&query='.uri_escape($netflix_series_title))};
 	}
@@ -546,7 +548,7 @@ foreach my $netflix_series_id (sort { $series_data_by_netflixid{$b}->{latest_wat
 	}
 	else
 	{
-		if(MODE eq 'TV')
+		if($series_data_by_netflixid{$netflix_series_id}->{is_tv})
 		{
 			foreach my $trakt_show (@search_data)
 			{
@@ -657,7 +659,7 @@ foreach my $netflix_series_id (sort { $series_data_by_netflixid{$b}->{latest_wat
 	}
 	foreach my $trakt_series_id (keys %{$trakt_data->{serieses}})
 	{
-		if(MODE eq 'TV')
+		if($series_data->{is_tv})
 		{
 			match_tv_netflix_to_trakt($series_data, $trakt_series_id);
 		}
