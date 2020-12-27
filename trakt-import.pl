@@ -15,6 +15,7 @@ use IPC::Run 'run';
 use Date::Parse;
 use POSIX 'strftime';
 use List::Util qw(min max sum);
+use Getopt::Long qw(GetOptions);
 $|=1;
 $Data::Dumper::Indent = 1;
 binmode STDOUT, ':utf8';
@@ -462,19 +463,23 @@ else
 	write_file('.trakt_access_token', $access_token);
 }
 
-
-
-
-my $dump_file = (glob "netflix-streaming-history*.json")[-1];
-my $netflix_data = from_json(read_file($dump_file));
 my $series_filter;
 my $skip_until;
-if(scalar(@ARGV) >= 2 && $ARGV[0] eq '--skip-until')
+my $debug;
+my $input_file;
+
+GetOptions(
+	'skip-until=s' => \$skip_until,
+	'filter=s' => \$series_filter,
+	'input-file=s' => \$input_file,
+	'debug' => \$debug,
+) or die "Usage: $0 [--skip-until name] [--filter name] [--input-file name] --debug  --from NAME\n";
+
+if(!$input_file)
 {
-	shift;
-	$skip_until = shift;
+	$input_file = (glob "netflix-streaming-history*.json")[-1];
 }
-$series_filter = @ARGV ? shift : '';
+my $netflix_data = from_json(read_file($input_file));
 
 my %series_data_by_netflixid;
 
