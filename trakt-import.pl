@@ -554,10 +554,31 @@ foreach my $netflix_series_id (sort { $series_data_by_netflixid{$b}->{latest_wat
 		print Dumper(\%netflix_title_to_ids);
 		say "Using \"title\" field from Netflix instead of \"episodeTitle\"";
 		$series_data_by_netflixid{$netflix_series_id}->{use_season_in_name} = 1;
+		%netflix_title_to_ids = ();
 		foreach my $netflix_watch (@netflix_watches)
 		{
 			$netflix_watch->{episodeTitle} = $netflix_watch->{title};
+			$netflix_title_to_ids{$netflix_watch->{episodeTitle}}->{$netflix_watch->{movieID}} = 1;
 		}
+	}
+	my %duplicate_netflix_titles = map { $_ => 1 } grep { scalar keys $netflix_title_to_ids{$_}->%* > 1 } keys %netflix_title_to_ids;
+	if(%duplicate_netflix_titles)
+	{
+		say "Duplicate title in Netflix! (".join(", ", keys %duplicate_netflix_titles).")";
+		say "Trying hack of adding season info.";
+		%netflix_title_to_ids = ();
+		foreach my $netflix_watch (@netflix_watches)
+		{
+			$netflix_watch->{episodeTitle} = defined($duplicate_netflix_titles{$netflix_watch->{episodeTitle}}) && $netflix_watch->{seasonDescriptor} ? "$netflix_watch->{episodeTitle} ($netflix_watch->{seasonDescriptor})" : $netflix_watch->{episodeTitle};
+			$netflix_title_to_ids{$netflix_watch->{episodeTitle}}->{$netflix_watch->{movieID}} = 1;
+		}
+	}
+	%duplicate_netflix_titles = map { $_ => 1 } grep { scalar keys $netflix_title_to_ids{$_}->%* > 1 } keys %netflix_title_to_ids;
+	if(%duplicate_netflix_titles)
+	{
+		say "Duplicate title in Netflix! (".join(", ", keys %duplicate_netflix_titles).")";
+		say "Giving up. Skipping!";
+		next;
 	}
 
 	my %netflix_title_to_watch_time;
