@@ -408,6 +408,17 @@ sub interact($$)
 					$trakt_episode_data->{netflix_watch_time_str} = strftime("%FT%X.000Z", gmtime($watch_time / 1000));
 				}
 			}
+			else
+			{
+				# Trakt title doesn't match. If Netflix does, it'll unmatch it
+				my $other_trakt_episode_data = (grep { defined($_->{netflix_title}) && $_->{netflix_title} eq $netflix_title } $trakt_series_data->{episodes}->@*)[0];
+				if($other_trakt_episode_data)
+				{
+					delete $other_trakt_episode_data->{netflix_title};
+					delete $other_trakt_episode_data->{netflix_watch_time};
+					delete $other_trakt_episode_data->{netflix_watch_time_str};
+				}
+			}
 			print_series_summary($series_data, $trakt_series_id);
 
 		}
