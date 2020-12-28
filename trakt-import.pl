@@ -153,9 +153,10 @@ sub match_tv_netflix_to_trakt($$)
 	#say "trakt series id: $trakt_series_id";
 	#print_series_summary($series_data, $trakt_series_id);
 
-	if(grep { scalar($_->{trakt_watches}->@*) > 1 } $trakt_series_data->{episodes}->@*)
+	my @multiple_trakt_watches = grep { scalar($_->{trakt_watches}->@*) > 1 } $trakt_series_data->{episodes}->@*;
+	if(@multiple_trakt_watches)
 	{
-		printf "https://trakt.tv/shows/%-30s %s\n", $trakt_series_data->{show_data}->{ids}->{slug}, "SKIPPING! Multiple Trakt watches!!";
+		printf "https://trakt.tv/shows/%-30s %s\n", $trakt_series_data->{show_data}->{ids}->{slug}, "SKIPPING! Multiple Trakt watches!! (" . join(", ", map { $_->{title} } @multiple_trakt_watches) . ")";
 		return undef;
 	}
 
