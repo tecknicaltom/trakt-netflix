@@ -168,6 +168,8 @@ sub match_tv_netflix_to_trakt($$)
 			sprintf "Season %d: \"%s\"", $trakt_series_data->{episodes}->[$i]->{season}, $trakt_series_data->{episodes}->[$i]->{title}
 			: $trakt_series_data->{episodes}->[$i]->{title};
 
+		next if(!$trakt_episode_title);
+
 		if (defined($unmatched_trakt_episodes_by_title{$trakt_episode_title}))
 		{
 			printf "https://trakt.tv/shows/%-30s %s\n", $trakt_series_data->{show_data}->{ids}->{slug}, "SKIPPING! Duplicated Trakt title!! ($trakt_episode_title)";
