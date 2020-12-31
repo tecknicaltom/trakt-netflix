@@ -282,6 +282,7 @@ sub match_movie_netflix_to_trakt($$)
 	$series_match_score += scalar(grep {$_} values $trakt_series_data->{movie_data}->{ids}->%*);
 	$series_match_score += 100 * int($trakt_series_data->{movie_data}->{rating});
 	$series_match_score += int($trakt_series_data->{movie_data}->{votes});
+	$series_match_score += 500 if($trakt_series_data->{trakt_watches}->@*);
 	$trakt_series_data->{series_match_score} = $series_match_score;
 	printf "https://trakt.tv/movies/%-30s %s\n", $trakt_series_data->{movie_data}->{ids}->{slug}, "Score: $series_match_score";
 	return $series_match_score;
