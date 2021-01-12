@@ -1,0 +1,4 @@
+netflix-streaming-history-*.json
+netflix-streaming-history-*.csv
+hulu-20*.*
+.trakt_access_token
