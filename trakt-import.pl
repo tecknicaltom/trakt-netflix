@@ -14,7 +14,7 @@ use Fuzzy 'token_set_ratio';
 use IPC::Run 'run';
 use Date::Parse;
 use POSIX 'strftime';
-use List::Util qw(min max sum);
+use List::Util qw(min max sum shuffle);
 use Getopt::Long qw(GetOptions);
 $|=1;
 $Data::Dumper::Indent = 1;
@@ -489,13 +489,17 @@ my $series_filter;
 my $skip_until;
 my $debug;
 my $input_file;
+my $order_reverse;
+my $order_random;
 
 GetOptions(
 	'skip-until=s' => \$skip_until,
 	'filter=s' => \$series_filter,
 	'input-file=s' => \$input_file,
+	'reverse' => \$order_reverse,
+	'random' => \$order_random,
 	'debug' => \$debug,
-) or die "Usage: $0 [--skip-until name] [--filter name] [--input-file name] --debug  --from NAME\n";
+) or die "Usage: $0 [--skip-until name] [--filter name] [--input-file name] [--reverse] [--random] --debug\n";
 
 if(!$input_file)
 {
@@ -540,7 +544,20 @@ foreach my $netflix_watch (@$netflix_data)
 	$series_data_by_netflixid{$netflixid}->{latest_watch} = max($series_data_by_netflixid{$netflixid}->{latest_watch} // 0, $netflix_watch->{date});
 }
 
-foreach my $netflix_series_id (sort { $series_data_by_netflixid{$b}->{latest_watch} <=> $series_data_by_netflixid{$a}->{latest_watch} } keys %series_data_by_netflixid)
+my @series_ids;
+if($order_random)
+{
+	@series_ids = shuffle keys %series_data_by_netflixid;
+}
+else
+{
+	@series_ids = sort { $series_data_by_netflixid{$b}->{latest_watch} <=> $series_data_by_netflixid{$a}->{latest_watch} } keys %series_data_by_netflixid;
+}
+if($order_reverse)
+{
+	@series_ids = reverse @series_ids;
+}
+foreach my $netflix_series_id (@series_ids)
 {
 	my @netflix_watches = grep { $_->{series} && $_->{series} == $netflix_series_id } @$netflix_data;
 	$series_data_by_netflixid{$netflix_series_id}->{use_season_in_name} = 0;
