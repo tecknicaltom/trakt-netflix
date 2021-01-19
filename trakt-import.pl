@@ -491,6 +491,8 @@ my $debug;
 my $input_file;
 my $order_reverse;
 my $order_random;
+my $only_tv;
+my $only_movies;
 
 GetOptions(
 	'skip-until=s' => \$skip_until,
@@ -498,8 +500,15 @@ GetOptions(
 	'input-file=s' => \$input_file,
 	'reverse' => \$order_reverse,
 	'random' => \$order_random,
+	'only-tv' => \$only_tv,
+	'only-movies' => \$only_movies,
 	'debug' => \$debug,
 ) or die "Usage: $0 [--skip-until name] [--filter name] [--input-file name] [--reverse] [--random] --debug\n";
+
+if($only_tv && $only_movies)
+{
+	die "Cannot do both --only-tv and --only-movies";
+}
 
 if(!$input_file)
 {
@@ -546,6 +555,16 @@ if($order_reverse)
 {
 	@series_ids = reverse @series_ids;
 }
+
+if($only_tv)
+{
+	@series_ids = grep { $series_data_by_netflixid{$_}->{is_tv} } @series_ids;
+}
+if($only_movies)
+{
+	@series_ids = grep { !$series_data_by_netflixid{$_}->{is_tv} } @series_ids;
+}
+
 foreach my $netflix_series_id (@series_ids)
 {
 	if($skip_until)
