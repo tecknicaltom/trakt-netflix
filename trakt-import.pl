@@ -526,17 +526,6 @@ foreach my $netflix_watch (@$netflix_data)
 		$netflixid = $netflix_watch->{movieID};
 		$netflix_series_title = $netflix_watch->{title};
 	}
-	if($skip_until)
-	{
-		if(index($netflix_series_title, $skip_until) >= 0)
-		{
-			undef $skip_until;
-		}
-		else
-		{
-			next;
-		}
-	}
 	next if($series_filter && index($netflix_series_title, $series_filter) < 0);
 	push @{$series_data_by_netflixid{$netflixid}->{netflix}->{watches}}, $netflix_watch;
 	$series_data_by_netflixid{$netflixid}->{is_tv} = $is_tv;
@@ -559,6 +548,18 @@ if($order_reverse)
 }
 foreach my $netflix_series_id (@series_ids)
 {
+	if($skip_until)
+	{
+		if(index($series_data_by_netflixid{$netflix_series_id}->{netflix}->{title}, $skip_until) >= 0)
+		{
+			undef $skip_until;
+		}
+		else
+		{
+			next;
+		}
+	}
+
 	my @netflix_watches = grep { $_->{series} && $_->{series} == $netflix_series_id } @$netflix_data;
 	$series_data_by_netflixid{$netflix_series_id}->{use_season_in_name} = 0;
 
